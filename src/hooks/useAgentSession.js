@@ -23,7 +23,7 @@ export function useAgentSession(threadId) {
   const [tools, setTools] = useState([]);
   const [error, setError] = useState(null);
   const [contractErrors, setContractErrors] = useState(0);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const [lastEventAt, setLastEventAt] = useState(null);
   const abortRef = useRef(null);
   const busyRef = useRef(false);
@@ -105,16 +105,11 @@ export function useAgentSession(threadId) {
     return s;
   }, [threadId]);
 
-  
+
   const handleStreamError = useCallback(
     async (e) => {
       try {
-        if (e.name === "AbortError") {
-          await refreshState();                 // przerwanie ≠ zawieszenie statusu
-          return;
-        }
-        if (e instanceof ConflictError) {
-          setError(e.detail);
+        if (e.name === "AbortError" || e instanceof ConflictError) {
           await refreshState();
           return;
         }
@@ -139,18 +134,26 @@ export function useAgentSession(threadId) {
       setError(null);
       setGate(null);  
       setStatus("streaming");
+      setLastEventAt(Date.now());
 
       const controller = new AbortController();
       abortRef.current = controller;
+
+      let opened = false;
 
       try {
         await streamRun({
           path,
           body,
           signal: controller.signal,
+          onOpen: () => { opened = true; },
           onEvent: (evt) => handleEvent(evt, aiMsg.id),
         });
       } catch (e) {
+        if (!opened) {
+        const ids = [userMsg?.id, aiMsg.id].filter(Boolean);
+        setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+        }
         await handleStreamError(e);
       } finally {
         abortRef.current = null;
@@ -163,7 +166,7 @@ export function useAgentSession(threadId) {
         );
       }
     },
-    [handleEvent, handleStreamError]
+    [handleEvent, handleStreamError, updateTools]
   );
 
 
@@ -203,25 +206,50 @@ export function useAgentSession(threadId) {
   const abort = useCallback(() => abortRef.current?.abort(), []);
 
 
+  function rebuildHistory(raw) {
+  const out = [];
+  let pendingTools = [];
+
+  for (const m of raw) {
+    if (m.role === "tool") {
+      pendingTools.push({
+        id: newId(),
+        name: m.name ?? "narzędzie",
+        args: {},
+        status: m.status === "error" ? "unresolved" : "ok",
+        result: m.content,
+      });
+      continue;
+    }
+    if (m.role === "ai" && !m.content) continue;      // AIMessage z tool_calls, bez treści
+
+    const msg = { id: newId(), role: m.role, content: m.content };
+    if (m.role === "ai" && pendingTools.length) {
+      msg.toolHistory = pendingTools;
+      pendingTools = [];
+    }
+    out.push(msg);
+  }
+  return out;
+}
+
+
   const openThread = useCallback(async () => {
     abortRef.current?.abort();
-    setMessages([]);
-    setTools([]);
-    toolsRef.current = [];
-    setGate(null);
-    setError(null);
-    setContractErrors(0);
-
     try {
       const s = await getThreadState(threadId);      // 1. CZY coś czeka
+      setMessages([]);                               // potem resety
+      setTools([]);
+      toolsRef.current = [];
+      setError(null);
+      setContractErrors(0);
       setStatus(s.status);
       setGate(s.gate);
 
       const h = await getHistory(threadId);          // 2. historia
       if (busyRef.current) return;  
-      setMessages(
-        (h.messages ?? []).map((m) => ({ id: newId(), role: m.role, content: m.content }))
-      );
+      setMessages(rebuildHistory(h.messages ?? []));
+
     } catch (e) {
       if (e instanceof TypeError || e instanceof ReferenceError) {
         console.error("Błąd klienta (bug):", e);   
@@ -232,14 +260,17 @@ export function useAgentSession(threadId) {
   }, [threadId]);
 
   useEffect(() => {
+    // Synchronizacja z backendem przy zmianie wątku — settery wołane po await,
+    // reguła nie rozróżnia tego przypadku od kaskady renderów.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (threadId) openThread();
   }, [threadId, openThread]);
   
 
   const liveness =
   status !== "streaming" || !lastEventAt ? "idle"
-  : now - lastEventAt > 45000 ? "red"
-  : now - lastEventAt > 20000 ? "yellow"
+  : now - lastEventAt > 60000 ? "red"
+  : now - lastEventAt > 30000 ? "yellow"
   : "green";
 
   return {

@@ -5,7 +5,7 @@ const API = import.meta.env.VITE_API_URL;
 
 const TERMINAL_EVENTS = new Set(["done", "gate", "error"]);
 
-export async function streamRun({ path, body, signal, onEvent }) {
+export async function streamRun({ path, body, signal, onEvent, onOpen }) {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -19,6 +19,7 @@ export async function streamRun({ path, body, signal, onEvent }) {
   }
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   if (!res.body) throw new Error("Odpowiedź bez strumienia.");
+  onOpen?.();
 
   let terminated = false;
 

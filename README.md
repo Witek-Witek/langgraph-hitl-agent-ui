@@ -1,16 +1,48 @@
-# React + Vite
+# Klient przeglądarkowy agenta LangGraph
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Jeden klient dla wszystkich stage'ów backendu — wskazuje backend przez `VITE_API_URL`,
+konsumuje kontrakt SSE, nie implementację. Jeśli przestaje działać po zmianie stage'u
+backendu, kontrakt został złamany.
 
-Currently, two official plugins are available:
+## Uruchomienie
+    cd ui
+    pnpm install
+    cp .env.example .env.local        # VITE_API_URL=http://localhost:8000
+    pnpm dev                          # http://localhost:5173
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Backend (`stage_08`) musi mieć `http://localhost:5173` w `CORS_ORIGINS`.
 
-## React Compiler
+## Architektura
+    src/api/client.js        REST: /state, /history, ConflictError, mapThreadState
+    src/api/stream.js        POST + ReadableStream + parser SSE, zdarzenia syntetyczne
+    src/hooks/useAgentSession.js   maszyna stanów, tabela ALLOWED, runStream
+    src/components/          MessageList, Composer, GatePanel, StatusBar, ThreadPicker
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Maszyna stanów
+| Stan | Dozwolone | Źródło |
+|---|---|---|
+| `idle` | send | `done`, `/state` bez oczekiwania |
+| `streaming` | abort | start operacji |
+| `waiting_gate` | decide | zdarzenie `gate`, `/state` z `pending_kind: gate` |
+| `pending_execution` | finish | `/state` z `pending_kind: execution` |
+| `error` | send | zdarzenie `error`, błąd sieci |
 
-## Expanding the ESLint configuration
+## Kontrakt zdarzeń (obsługiwany)
+`token` · `tool_start` · `tool_end` · `gate` · `done` · `error` · `heartbeat`
+Syntetyczne (transport): `__truncated__`, `__malformed__`.
+Nieznane → pomijane i liczone (licznik „kontrakt: N" w pasku stanu).
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Zasady, których ten klient pilnuje
+- **`gate` i `error` kończą strumień jak `done`** — inaczej UI wisi na każdej bramce.
+- **Payload bramki renderowany bez modyfikacji** — człowiek widzi dokładnie to, co zostanie wykonane.
+- **Stan przed historią** przy otwarciu wątku — zaległa bramka widoczna, zanim UI zasugeruje gotowość.
+- **Optymistyczna wiadomość wycofywana, gdy backend jej nie przyjął** (409, brak połączenia);
+  zostaje, gdy strumień zerwał się po przyjęciu (jest w checkpoincie).
+- **409 → odświeżenie stanu, nigdy ponowienie.**
+- **Strumień nigdy z `useEffect`** — StrictMode wysłałby dwie tury.
+
+## Ograniczenia
+- Lista wątków tylko w `localStorage` tej przeglądarki (backend nie ma rejestru wątków).
+- Brak uwierzytelnienia; `thread_id` od klienta (dług IDOR od Stage 05).
+- Heartbeat backendu nie dociera w fazie myślenia modelu (luka D-08).
+- Brak Markdown i historii argumentów narzędzi po odświeżeniu (`/history` zwraca wynik bez `args`).

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 function ToolHistory({ tools }) {
   const [open, setOpen] = useState(false);
@@ -25,7 +25,13 @@ function ToolHistory({ tools }) {
 }
 
 export function MessageList({ messages, liveTools }) {
-  const lastAiId = messages.findLast((m) => m.role === "ai")?.id
+  const endRef = useRef(null);
+  const lastAiId = [...messages].reverse().find((m) => m.role === "ai")?.id;
+
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ block: "end" });
+  }, [messages]);
+
   return (
     <div className="messages">
       {messages.map((m) => (
@@ -36,6 +42,7 @@ export function MessageList({ messages, liveTools }) {
           )}
         </div>
       ))}
+      <div ref={endRef} />
     </div>
   );
 }

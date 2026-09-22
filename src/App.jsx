@@ -7,8 +7,14 @@ import { GatePanel } from "./components/GatePanel";
 import { StatusBar } from "./components/StatusBar";
 
 export default function App() {
-  const [threads, setThreads] = useState(() => loadThreads());
-  const [currentId, setCurrentId] = useState(() => loadThreads()[0]?.id ?? null);
+  const [threads, setThreads] = useState(() => {
+    const saved = loadThreads();
+    if (saved.length) return saved;
+    const first = [{ id: crypto.randomUUID(), label: "Wątek 1" }];
+    saveThreads(first);
+    return first;
+  });
+  const [currentId, setCurrentId] = useState(() => threads[0].id);
 
   const newThread = () => {
     const t = { id: crypto.randomUUID(), label: `Wątek ${threads.length + 1}` };
@@ -17,10 +23,6 @@ export default function App() {
     saveThreads(next);
     setCurrentId(t.id);
   };
-
-  useEffect(() => {
-    if (!currentId) newThread();
-  }, []);
 
   const s = useAgentSession(currentId);
 

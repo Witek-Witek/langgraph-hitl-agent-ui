@@ -12,7 +12,7 @@ export function Composer({ status, onSend, onAbort }) {
   const enabled = can(status, "send");
 
   const submit = () => {
-    console.log("submit:", { status, enabled, text });
+    console.log("submit:", { status, enabled, text });  // LOGI do usunięcia
     if (!enabled || !text.trim()) return;
     onSend(text);
     setText("");
