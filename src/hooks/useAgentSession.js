@@ -16,7 +16,35 @@ const ALLOWED = {
 export const can = (status, action) => ALLOWED[status]?.has(action) ?? false;
 
 
-export function useAgentSession(threadId) {
+  function rebuildHistory(raw) {
+  const out = [];
+  let pendingTools = [];
+
+  for (const m of raw) {
+    if (m.role === "tool") {
+      pendingTools.push({
+        id: newId(),
+        name: m.name ?? "narzędzie",
+        args: {},
+        status: m.status === "error" ? "error" : "ok",
+        result: m.content,
+      });
+      continue;
+    }
+    if (m.role === "ai" && !m.content) continue;      // AIMessage z tool_calls, bez treści
+
+    const msg = { id: newId(), role: m.role, content: m.content };
+    if (m.role === "ai" && pendingTools.length) {
+      msg.toolHistory = pendingTools;
+      pendingTools = [];
+    }
+    out.push(msg);
+  }
+  return out;
+}
+
+
+export function useAgentSession(threadId, ctx = { profile: "", persona: "" }) {
   const [status, setStatus] = useState("idle");
   const [gate, setGate] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -28,6 +56,9 @@ export function useAgentSession(threadId) {
   const abortRef = useRef(null);
   const busyRef = useRef(false);
   const toolsRef = useRef([]);
+  const ctxRef = useRef(ctx);
+
+  ctxRef.current = ctx; 
 
 
   useEffect(() => {
@@ -42,16 +73,36 @@ export function useAgentSession(threadId) {
     setTools(next);
   }, []);
   
+  
   const snapshotTools = useCallback((aiMsgId) => {
+    const taken = toolsRef.current.filter((t) => t.status !== "running");
+    const kept  = toolsRef.current.filter((t) => t.status === "running");
+    toolsRef.current = kept;          // zaproponowane, jeszcze niewykonane → następna tura
+    setTools(kept);
     setMessages((prev) =>
-      prev.map((m) => (m.id === aiMsgId ? { ...m, toolHistory: toolsRef.current } : m))
+      prev.map((m) => (m.id === aiMsgId ? { ...m, toolHistory: taken } : m))
+    );
+  }, []);
+  
+
+
+  const refreshSnapshots = useCallback(() => {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.toolHistory?.some((t) => toolsRef.current.some((c) => c.id === t.id))
+          ? { ...m, toolHistory: m.toolHistory.map(
+              (t) => toolsRef.current.find((c) => c.id === t.id) ?? t
+            ) }
+          : m
+      )
     );
   }, []);
 
 
   const appendToken = useCallback((msgId, chunk) => {
+    const text = typeof chunk === "string" ? chunk : "";
     setMessages((prev) =>
-      prev.map((m) => (m.id === msgId ? { ...m, content: m.content + chunk } : m))
+      prev.map((m) => (m.id === msgId ? { ...m, content: m.content + text } : m))
     );
   }, []);
 
@@ -92,10 +143,11 @@ export function useAgentSession(threadId) {
           };
           return next;
         });
+        refreshSnapshots();
         break;
       default:  setContractErrors((n) => n + 1);
     }
-  }, [appendToken, snapshotTools, updateTools]);
+  }, [appendToken, snapshotTools, updateTools, refreshSnapshots]);
 
 
   const refreshState = useCallback(async () => {
@@ -144,7 +196,7 @@ export function useAgentSession(threadId) {
       try {
         await streamRun({
           path,
-          body,
+          body: { ...body, ...ctxRef.current },
           signal: controller.signal,
           onOpen: () => { opened = true; },
           onEvent: (evt) => handleEvent(evt, aiMsg.id),
@@ -161,12 +213,15 @@ export function useAgentSession(threadId) {
         updateTools((prev) =>
           prev.map((t) => (t.status === "running" ? { ...t, status: "unresolved" } : t))
         );
+        refreshSnapshots();
         setMessages((prev) =>
-          prev.filter((m) => !(m.id === aiMsg.id && m.content === ""))   // pusty placeholder
+          prev.filter(
+            (m) => !(m.id === aiMsg.id && m.content === "" && !m.toolHistory?.length)
+          )   // pusty placeholder, ale tylko gdy nie niesie śladu narzędzi
         );
       }
     },
-    [handleEvent, handleStreamError, updateTools]
+    [handleEvent, handleStreamError, updateTools, refreshSnapshots]
   );
 
 
@@ -190,7 +245,7 @@ export function useAgentSession(threadId) {
       if (!can(status, "decide")) return;  //było: if (status !== "waiting_gate") return;
       return runStream({
         path: `/threads/${encodeURIComponent(threadId)}/resume`,
-        body: { thread_id: threadId, action, note: note || null },
+        body: { action, note: note || null },
       });
     },
     [status, threadId, runStream]
@@ -204,34 +259,6 @@ export function useAgentSession(threadId) {
 
 
   const abort = useCallback(() => abortRef.current?.abort(), []);
-
-
-  function rebuildHistory(raw) {
-  const out = [];
-  let pendingTools = [];
-
-  for (const m of raw) {
-    if (m.role === "tool") {
-      pendingTools.push({
-        id: newId(),
-        name: m.name ?? "narzędzie",
-        args: {},
-        status: m.status === "error" ? "unresolved" : "ok",
-        result: m.content,
-      });
-      continue;
-    }
-    if (m.role === "ai" && !m.content) continue;      // AIMessage z tool_calls, bez treści
-
-    const msg = { id: newId(), role: m.role, content: m.content };
-    if (m.role === "ai" && pendingTools.length) {
-      msg.toolHistory = pendingTools;
-      pendingTools = [];
-    }
-    out.push(msg);
-  }
-  return out;
-}
 
 
   const openThread = useCallback(async () => {

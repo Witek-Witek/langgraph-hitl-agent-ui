@@ -1,3 +1,5 @@
+import { CLIENT_CONTRACT } from "../hooks/useConfigOptions";
+
 const STATUS_LABEL = {
   idle: "gotowy",
   streaming: "agent pracuje",
@@ -8,11 +10,11 @@ const STATUS_LABEL = {
 
 const LIVENESS_LABEL = {
   green: "połączenie aktywne",
-  yellow: "brak odpowiedzi > 20 s",
-  red: "brak odpowiedzi > 45 s",
+  yellow: "brak odpowiedzi > 30 s",
+  red: "brak odpowiedzi > 60 s",
 };
 
-export function StatusBar({ status, liveness, error, contractErrors, threadId, onFinish }) {
+export function StatusBar({ status, liveness, error, contractErrors, threadId, onFinish, mismatch }) {
   return (
     <div className="statusbar">
       <span className={`statusbar__status statusbar__status--${status}`}>
@@ -36,6 +38,14 @@ export function StatusBar({ status, liveness, error, contractErrors, threadId, o
       {contractErrors > 0 && (
         <span className="statusbar__contract" title="Zdarzenia spoza kontraktu — pominięte">
           kontrakt: {contractErrors}
+        </span>
+      )}
+      {mismatch && (
+        <span
+          className="statusbar__contract"
+          title={`Klient napisany pod kontrakt ${CLIENT_CONTRACT}, serwer zgłasza ${mismatch}. Część funkcji może działać inaczej.`}
+        >
+          kontrakt serwera: {mismatch} ≠ {CLIENT_CONTRACT}
         </span>
       )}
     </div>

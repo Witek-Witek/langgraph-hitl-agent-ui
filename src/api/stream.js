@@ -17,7 +17,13 @@ export async function streamRun({ path, body, signal, onEvent, onOpen }) {
     const detail = await res.json().catch(() => ({}));
     throw new ConflictError(detail.detail);
   }
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) {
+    let detail = "";
+    try { detail = JSON.stringify((await res.json()).detail); } catch { /* nie-JSON */ }
+    const msg = `HTTP ${res.status}${detail ? ` — ${detail}` : ""}`;
+    throw res.status === 409 ? new ConflictError(msg) : new Error(msg);
+  }
+
   if (!res.body) throw new Error("Odpowiedź bez strumienia.");
   onOpen?.();
 

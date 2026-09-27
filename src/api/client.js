@@ -33,8 +33,10 @@ export function mapThreadState(raw) {
 
 export const getHealth = () => request(`/health`);
 
+export const getThreadState = (id) =>
+  request(`/threads/${encodeURIComponent(id)}/state`).then(mapThreadState);
+
 export const getHistory = (id) =>
   request(`/threads/${encodeURIComponent(id)}/history`);
 
-export const getThreadState = (id) =>
-  request(`/threads/${encodeURIComponent(id)}/state`).then(mapThreadState);
+export const getOptions = () => request("/config/options");

@@ -1,48 +1,65 @@
-# Klient przeglądarkowy agenta LangGraph
+# Stage 10 — parametry per żądanie: kontekst uruchomienia + katalogi
 
-Jeden klient dla wszystkich stage'ów backendu — wskazuje backend przez `VITE_API_URL`,
-konsumuje kontrakt SSE, nie implementację. Jeśli przestaje działać po zmianie stage'u
-backendu, kontrakt został złamany.
+## Co wprowadza
+Klient steruje modelem i stylem odpowiedzi **per żądanie**. Wybór przechodzi typowanym
+kontekstem (`RunContext` + `context_schema`), a klient wysyła **klucze z katalogu**,
+nigdy specyfikacji. Prompt składany warstwowo. Naprawiony heartbeat (L-11).
 
-## Uruchomienie
-    cd ui
-    pnpm install
-    cp .env.example .env.local        # VITE_API_URL=http://localhost:8000
-    pnpm dev                          # http://localhost:5173
+## Jak uruchomić
+    uv sync
+    cp .env.example .env
+    uv run python diagnostics.py
+    uv run python serve.py
+    uv run langgraph dev
+    # klient: cd ../ui && pnpm dev
 
-Backend (`stage_08`) musi mieć `http://localhost:5173` w `CORS_ORIGINS`.
+## Trzy kanały danych
+| Kanał | Zawartość | Utrwalany | Przykład |
+|---|---|---|---|
+| State | dane rozmowy | tak (checkpoint) | `messages`, `route`, `tool_iterations` |
+| Config | identyfikatory techniczne | — | `thread_id`, `metadata` |
+| **Context** | wybory per uruchomienie | **nie** | `profile`, `persona` |
 
-## Architektura
-    src/api/client.js        REST: /state, /history, ConflictError, mapThreadState
-    src/api/stream.js        POST + ReadableStream + parser SSE, zdarzenia syntetyczne
-    src/hooks/useAgentSession.js   maszyna stanów, tabela ALLOWED, runStream
-    src/components/          MessageList, Composer, GatePanel, StatusBar, ThreadPicker
+**Kontekst nie przeżywa w checkpoincie** — każde uruchomienie musi go przekazać,
+w tym `/resume` i `/finish`. Pominięcie = cicha degradacja do wartości domyślnych.
 
-## Maszyna stanów
-| Stan | Dozwolone | Źródło |
-|---|---|---|
-| `idle` | send | `done`, `/state` bez oczekiwania |
-| `streaming` | abort | start operacji |
-| `waiting_gate` | decide | zdarzenie `gate`, `/state` z `pending_kind: gate` |
-| `pending_execution` | finish | `/state` z `pending_kind: execution` |
-| `error` | send | zdarzenie `error`, błąd sieci |
+## Katalogi (serwer decyduje, klient wybiera)
+- `MODEL_PROFILES` w `llm.py` — `fast` / `balanced` / `deep`; specyfikacja i parametry
+  (w tym temperatura) są właściwością profilu.
+- `PERSONAS` w `prompts.py` — `neutral` / `teacher` / `concise`; persona to **fragment**,
+  nie pełny prompt.
 
-## Kontrakt zdarzeń (obsługiwany)
-`token` · `tool_start` · `tool_end` · `gate` · `done` · `error` · `heartbeat`
-Syntetyczne (transport): `__truncated__`, `__malformed__`.
-Nieznane → pomijane i liczone (licznik „kontrakt: N" w pasku stanu).
+Klient nigdy nie wysyła specyfikacji modelu ani treści promptu. Powody: podmiana
+`api_key`/`base_url`, dopuszczenie niezweryfikowanego modelu oraz **wzrost cache'u
+fabryki sterowany z zewnątrz** (klucz od klienta = nieograniczona liczba wpisów).
 
-## Zasady, których ten klient pilnuje
-- **`gate` i `error` kończą strumień jak `done`** — inaczej UI wisi na każdej bramce.
-- **Payload bramki renderowany bez modyfikacji** — człowiek widzi dokładnie to, co zostanie wykonane.
-- **Stan przed historią** przy otwarciu wątku — zaległa bramka widoczna, zanim UI zasugeruje gotowość.
-- **Optymistyczna wiadomość wycofywana, gdy backend jej nie przyjął** (409, brak połączenia);
-  zostaje, gdy strumień zerwał się po przyjęciu (jest w checkpoincie).
-- **409 → odświeżenie stanu, nigdy ponowienie.**
-- **Strumień nigdy z `useEffect`** — StrictMode wysłałby dwie tury.
+## Warstwy promptu
+`FRAME` (stała, w tym zasady bezpieczeństwa) → persona → dane dynamiczne (data).
+Kolejność jest kontraktem: zmienne na końcu, bo dostawcy cache'ują **prefiks**.
+`FRAME` musi być identyczny we wszystkich personach — weryfikowalne w trace.
 
-## Ograniczenia
-- Lista wątków tylko w `localStorage` tej przeglądarki (backend nie ma rejestru wątków).
-- Brak uwierzytelnienia; `thread_id` od klienta (dług IDOR od Stage 05).
-- Heartbeat backendu nie dociera w fazie myślenia modelu (luka D-08).
-- Brak Markdown i historii argumentów narzędzi po odświeżeniu (`/history` zwraca wynik bez `args`).
+## Endpointy
+- `POST /chat/stream` — body: `{thread_id, message, profile?, persona?}`
+- `POST /threads/{id}/resume` — body: `{action, note?, profile?, persona?}`
+- `POST /threads/{id}/finish` — body: `{profile?, persona?}` *(zmiana kontraktu vs Stage 09)*
+- `GET /config/options` — katalogi + `contract_version` + `defaults`
+- `GET /threads/{id}/state`, `/history`, `GET /health`
+
+`contract_version: "10.0"` — klient przy rozbieżności **ostrzega**, nie blokuje.
+
+## Uwagi
+- **Dwie fabryki modeli:** `get_profile_llm(key)` (wybór użytkownika, katalog) i
+  `get_role_llm(role)` (decyzja operatora — klasyfikator, destylator). Nie ma `get_llm`.
+- **Walidacja dwuwarstwowa:** Pydantic na granicy HTTP (422) + `resolve_profile`/
+  `resolve_persona` w module (ValueError) — Studio i CLI nie przechodzą przez pierwszą.
+- **Heartbeat (L-11):** oczekiwanie na dwa źródła (`FIRST_COMPLETED`), nie opróżnianie
+  kolejki przy obrocie pętli — inaczej sygnał milczy dokładnie w fazie myślenia modelu.
+  Przy ręcznym `anext` obowiązkowe `agen.aclose()` w `finally`.
+- **Panel ustawień zablokowany na czas całej tury** (`streaming` + `waiting_gate`) —
+  tura z bramką to dwa uruchomienia; zmiana w połowie dałaby dwa modele w jednej odpowiedzi.
+- `classify` nie przyjmuje kontekstu — brak argumentu dokumentuje granicę w kodzie.
+- Dług: `thread_id` od klienta (IDOR od Stage 05), brak retencji checkpointów.
+
+## Co dojdzie dalej
+Uwierzytelnienie: `thread_id` budowany serwerowo z tożsamości użytkownika; katalogi
+profili mogą wtedy zależeć od uprawnień (np. `deep` tylko dla części kont).
