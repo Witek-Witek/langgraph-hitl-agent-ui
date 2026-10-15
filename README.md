@@ -1,65 +1,74 @@
-# Stage 10 — parametry per żądanie: kontekst uruchomienia + katalogi
+# LangGraph HITL Agent — UI
 
-## Co wprowadza
-Klient steruje modelem i stylem odpowiedzi **per żądanie**. Wybór przechodzi typowanym
-kontekstem (`RunContext` + `context_schema`), a klient wysyła **klucze z katalogu**,
-nigdy specyfikacji. Prompt składany warstwowo. Naprawiony heartbeat (L-11).
+A React client for a LangGraph agent with human-in-the-loop approval. It streams responses over SSE, shows tool activity as it happens, and lets the user approve or reject tool calls that have side effects.
 
-## Jak uruchomić
-    uv sync
-    cp .env.example .env
-    uv run python diagnostics.py
-    uv run python serve.py
-    uv run langgraph dev
-    # klient: cd ../ui && pnpm dev
+The backend lives in **[langgraph-hitl-agent](https://github.com/Witek-Witek/langgraph-hitl-agent)**.
 
-## Trzy kanały danych
-| Kanał | Zawartość | Utrwalany | Przykład |
-|---|---|---|---|
-| State | dane rozmowy | tak (checkpoint) | `messages`, `route`, `tool_iterations` |
-| Config | identyfikatory techniczne | — | `thread_id`, `metadata` |
-| **Context** | wybory per uruchomienie | **nie** | `profile`, `persona` |
+## Features
 
-**Kontekst nie przeżywa w checkpoincie** — każde uruchomienie musi go przekazać,
-w tym `/resume` i `/finish`. Pominięcie = cicha degradacja do wartości domyślnych.
+- **Sign-in** with Supabase email and password. The access token is attached in one place, and a `401` triggers one session refresh and retry before signing the user out.
+- **Per-user threads** stored on the server. The client keeps only the last opened thread in `localStorage`.
+- **Streaming** over `fetch` and `ReadableStream`, parsed with `eventsource-parser`. `EventSource` is not used because it cannot send a POST body or an `Authorization` header.
+- **Approval panel** that shows the pending tool calls and their arguments exactly as the server will execute them.
+- **Tool trace** attached to each answer, including calls that were rejected.
+- **Model profile and persona picker** built from the server's catalog, with a warning when the server reports a different contract version.
+- **Connection health indicator** driven by server heartbeats, and autoscroll that stops while you read earlier messages.
 
-## Katalogi (serwer decyduje, klient wybiera)
-- `MODEL_PROFILES` w `llm.py` — `fast` / `balanced` / `deep`; specyfikacja i parametry
-  (w tym temperatura) są właściwością profilu.
-- `PERSONAS` w `prompts.py` — `neutral` / `teacher` / `concise`; persona to **fragment**,
-  nie pełny prompt.
+## Tech stack
 
-Klient nigdy nie wysyła specyfikacji modelu ani treści promptu. Powody: podmiana
-`api_key`/`base_url`, dopuszczenie niezweryfikowanego modelu oraz **wzrost cache'u
-fabryki sterowany z zewnątrz** (klucz od klienta = nieograniczona liczba wpisów).
+React 19 · Vite · Supabase JS · eventsource-parser · plain CSS
 
-## Warstwy promptu
-`FRAME` (stała, w tym zasady bezpieczeństwa) → persona → dane dynamiczne (data).
-Kolejność jest kontraktem: zmienne na końcu, bo dostawcy cache'ują **prefiks**.
-`FRAME` musi być identyczny we wszystkich personach — weryfikowalne w trace.
+## How it works
 
-## Endpointy
-- `POST /chat/stream` — body: `{thread_id, message, profile?, persona?}`
-- `POST /threads/{id}/resume` — body: `{action, note?, profile?, persona?}`
-- `POST /threads/{id}/finish` — body: `{profile?, persona?}` *(zmiana kontraktu vs Stage 09)*
-- `GET /config/options` — katalogi + `contract_version` + `defaults`
-- `GET /threads/{id}/state`, `/history`, `GET /health`
+The session hook runs a small state machine, and each state allows only certain actions:
 
-`contract_version: "10.0"` — klient przy rozbieżności **ostrzega**, nie blokuje.
+| State | Allowed action | Entered on |
+|---|---|---|
+| `idle` | send | `done`, or an idle thread on open |
+| `streaming` | abort | any operation starting a run |
+| `waiting_gate` | approve / reject | `gate` event, or a pending approval on open |
+| `pending_execution` | finish | a run interrupted by a server restart |
+| `error` | send | `error` event, network failure |
 
-## Uwagi
-- **Dwie fabryki modeli:** `get_profile_llm(key)` (wybór użytkownika, katalog) i
-  `get_role_llm(role)` (decyzja operatora — klasyfikator, destylator). Nie ma `get_llm`.
-- **Walidacja dwuwarstwowa:** Pydantic na granicy HTTP (422) + `resolve_profile`/
-  `resolve_persona` w module (ValueError) — Studio i CLI nie przechodzą przez pierwszą.
-- **Heartbeat (L-11):** oczekiwanie na dwa źródła (`FIRST_COMPLETED`), nie opróżnianie
-  kolejki przy obrocie pętli — inaczej sygnał milczy dokładnie w fazie myślenia modelu.
-  Przy ręcznym `anext` obowiązkowe `agen.aclose()` w `finally`.
-- **Panel ustawień zablokowany na czas całej tury** (`streaming` + `waiting_gate`) —
-  tura z bramką to dwa uruchomienia; zmiana w połowie dałaby dwa modele w jednej odpowiedzi.
-- `classify` nie przyjmuje kontekstu — brak argumentu dokumentuje granicę w kodzie.
-- Dług: `thread_id` od klienta (IDOR od Stage 05), brak retencji checkpointów.
+Rules the client follows:
 
-## Co dojdzie dalej
-Uwierzytelnienie: `thread_id` budowany serwerowo z tożsamości użytkownika; katalogi
-profili mogą wtedy zależeć od uprawnień (np. `deep` tylko dla części kont).
+- `gate` and `error` end a stream just like `done`; otherwise the UI would hang on every approval.
+- When opening a thread, state is fetched **before** history, so a pending approval is shown before the UI looks ready.
+- An optimistic user message is rolled back if the server never accepted it, and kept if the stream broke after acceptance.
+- A `409` refreshes the thread state; it is never retried.
+- Streams are started from user actions only, never from `useEffect`, so React StrictMode cannot send a turn twice.
+- The app tree is keyed by user id, so switching accounts discards all in-memory state.
+
+## Project layout
+
+```
+src/api/        HTTP client, SSE stream parser, authenticated fetch, Supabase client
+src/hooks/      session state machine, auth, server options
+src/components/ messages, composer, approval panel, status bar, thread and settings pickers, login
+src/App.jsx     auth gate and main layout
+```
+
+## Getting started
+
+**Prerequisites:** Node.js 20+, pnpm, and the backend running locally.
+
+```bash
+pnpm install
+cp .env.example .env.local    # backend URL, Supabase URL and publishable key
+pnpm dev                      # http://localhost:5173
+```
+
+The backend must list `http://localhost:5173` in `CORS_ORIGINS`.
+
+## Known limitations
+
+- Messages are rendered as plain text, without Markdown.
+- Threads can be created and switched; renaming and deleting exist in the API but not yet in the UI.
+
+## Development
+
+The client is developed alongside the backend stages. Each completed stage is tagged (`ui-stage-11`, …).
+
+## License
+
+[MIT](LICENSE)
