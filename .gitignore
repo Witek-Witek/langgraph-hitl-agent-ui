@@ -25,5 +25,13 @@ dist-ssr
 
 # Environment variables
 .env
+.env.*
+!.env.example
 .env.local
 .env*.local
+
+
+# Logi, Tracebacks etc
+.langgraph_api/
+logs.txt
+_dev-docs/
