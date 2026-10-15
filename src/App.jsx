@@ -1,28 +1,58 @@
 import { useEffect, useRef, useState } from "react";
 import { useAgentSession, can } from "./hooks/useAgentSession";
-import { ThreadPicker, loadThreads, saveThreads } from "./components/ThreadPicker";
 import { MessageList } from "./components/MessageList";
 import { Composer } from "./components/Composer";
 import { GatePanel } from "./components/GatePanel";
 import { StatusBar } from "./components/StatusBar";
 import { useConfigOptions } from "./hooks/useConfigOptions";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { useAuth } from "./hooks/useAuth";
+import { LoginPanel } from "./components/LoginPanel";
+import { listThreads, createThread } from "./api/client";
+import { ThreadPicker } from "./components/ThreadPicker";
 
-export default function App() {
-  const [threads, setThreads] = useState(() => {
-    const saved = loadThreads();
-    if (saved.length) return saved;
-    const first = [{ id: crypto.randomUUID(), label: "Wątek 1" }];
-    saveThreads(first);
-    return first;
-  });
-  const [currentId, setCurrentId] = useState(() => threads[0].id);
+
+function AgentApp({ session, onSignOut }) {
   const [settings, setSettings] = useState(() => {
     try {
       const raw = JSON.parse(localStorage.getItem("agent.settings"));
       return { profile: "", persona: "", ...(raw ?? {}) };
     } catch { return { profile: "", persona: "" }; }
   });
+
+  const [threads, setThreads] = useState([]);
+  const [currentId, setCurrentId] = useState(null);
+  const [threadsError, setThreadsError] = useState(null);
+  const initRef = useRef(false);
+  const lastKey = `agent.lastThread.${session.user.id}`;
+
+  useEffect(() => {
+    if (initRef.current) return;          // StrictMode zachowuje ref między podwójnym montażem
+    initRef.current = true;
+    (async () => {
+      try {
+        let list = await listThreads();
+        if (!list.length) list = [await createThread("Wątek 1")];
+        setThreads(list);
+        setThreadsError(null);
+        const last = localStorage.getItem(lastKey);
+        setCurrentId(list.some((t) => t.id === last) ? last : list[0].id);
+      } catch (e) {
+        if (String(e.message).startsWith("HTTP 401")) { onSignOut(); return; }
+        setThreadsError(e.message ?? "Nie udało się pobrać listy wątków.");
+      }
+    })();
+  }, [lastKey, onSignOut]);
+
+  useEffect(() => {
+    if (currentId) try { localStorage.setItem(lastKey, currentId); } catch { /* wygoda */ }
+  }, [currentId, lastKey]);
+
+  const newThread = async () => {
+    const t = await createThread(`Wątek ${threads.length + 1}`);
+    setThreads((prev) => [t, ...prev]);
+    setCurrentId(t.id);
+  };
 
   const mainRef = useRef(null);
   const stickRef = useRef(true);          // czy trzymać się dołu
@@ -52,7 +82,7 @@ export default function App() {
     const el = mainRef.current;
     if (!el) return;
     const onScroll = () => {
-      // 40 px zapasu — użytkownik "jest przy dole" także tuż nad nim
+      // 150 px zapasu — użytkownik "jest przy dole" także tuż nad nim
       stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150;
     };
     el.addEventListener("scroll", onScroll, { passive: true });
@@ -77,13 +107,13 @@ export default function App() {
   }, [s.gate]);
 
 
-  const newThread = () => {
-    const t = { id: crypto.randomUUID(), label: `Wątek ${threads.length + 1}` };
-    const next = [t, ...threads];
-    setThreads(next);
-    saveThreads(next);
-    setCurrentId(t.id);
-  };
+  // const newThread = () => {
+  //   const t = { id: crypto.randomUUID(), label: `Wątek ${threads.length + 1}` };
+  //   const next = [t, ...threads];
+  //   setThreads(next);
+  //   saveThreads(next);
+  //   setCurrentId(t.id);
+  // };
 
   // const mainRef = useRef(null);
 
@@ -104,12 +134,16 @@ export default function App() {
           onOpen={setCurrentId}
           onNew={newThread}
         />
+        {threadsError && (
+          <span className="statusbar__error">{threadsError}</span>
+        )}
         <SettingsPanel 
           options={options} 
           {...settings} 
           onChange={updateSettings}
           disabled={turnInProgress} 
         />
+        <button className="btn btn--ghost" onClick={onSignOut}>Wyloguj</button>
       </header>
 
       <main className="app__main" ref={mainRef}>
@@ -135,4 +169,12 @@ export default function App() {
       </footer>
     </div>
   );
+}
+
+
+export default function App() {
+  const { session, ready, signIn, signOut } = useAuth();
+  if (!ready) return null;
+  if (!session) return <LoginPanel onSignIn={signIn} />;
+  return <AgentApp key={session.user.id} session={session} onSignOut={signOut} />;
 }

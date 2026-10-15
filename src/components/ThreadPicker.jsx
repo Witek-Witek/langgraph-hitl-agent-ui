@@ -1,20 +1,20 @@
-const KEY = "agent.threads";
+// const KEY = "agent.threads";
 
-export function loadThreads() {
-  try {
-    return JSON.parse(localStorage.getItem(KEY)) ?? [];
-  } catch {
-    return [];
-  }
-}
+// export function loadThreads() {
+//   try {
+//     return JSON.parse(localStorage.getItem(KEY)) ?? [];
+//   } catch {
+//     return [];
+//   }
+// }
 
-export function saveThreads(threads) {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(threads));
-  } catch {
-    /* quota / tryb prywatny — lista wątków jest wygodą, nie wymogiem */
-  }
-}
+// export function saveThreads(threads) {
+//   try {
+//     localStorage.setItem(KEY, JSON.stringify(threads));
+//   } catch {
+//     /* quota / tryb prywatny — lista wątków jest wygodą, nie wymogiem */
+//   }
+// }
 
 export function ThreadPicker({ threads, current, onOpen, onNew }) {
   return (

@@ -185,6 +185,67 @@ body {
   cursor: not-allowed;
 }
 
+/* ---------- logowanie ---------- */
+.login {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(360px, calc(100% - 32px));
+  margin: 14vh auto 0;
+  padding: 28px 28px 24px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgb(0 0 0 / .04), 0 8px 24px rgb(0 0 0 / .06);
+}
+
+.login h1 {
+  margin: 0 0 6px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+}
+
+.login input {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+}
+
+.login input:focus {
+  outline: none;
+  border-color: var(--gate);
+  box-shadow: 0 0 0 3px rgb(124 58 237 / .15);
+}
+
+.login .btn {
+  margin-top: 4px;
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--surface);
+  font-weight: 500;
+}
+
+.login .btn:hover:not(:disabled) { opacity: .9; border-color: var(--text); }
+
+.login__error {
+  font-size: 13px;
+  color: var(--err);
+}
+
+/* przycisk drugorzędny (Wyloguj) */
+.btn--ghost {
+  padding: 4px 10px;
+  font-size: 13px;
+  border-color: transparent;
+  color: var(--muted);
+}
+.btn--ghost:hover:not(:disabled) { color: var(--text); border-color: var(--line); }
+
+
 /* ---------- wątki ---------- */
 .threads { display: flex; gap: 8px; align-items: center; }
 .threads select {

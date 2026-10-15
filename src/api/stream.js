@@ -1,12 +1,13 @@
 import { createParser } from "eventsource-parser";
 import { ConflictError } from "./client";
+import { authFetch } from "./auth";
 
 const API = import.meta.env.VITE_API_URL;
 
 const TERMINAL_EVENTS = new Set(["done", "gate", "error"]);
 
 export async function streamRun({ path, body, signal, onEvent, onOpen }) {
-  const res = await fetch(`${API}${path}`, {
+  const res = await authFetch(`${API}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : null,
@@ -21,7 +22,7 @@ export async function streamRun({ path, body, signal, onEvent, onOpen }) {
     let detail = "";
     try { detail = JSON.stringify((await res.json()).detail); } catch { /* nie-JSON */ }
     const msg = `HTTP ${res.status}${detail ? ` — ${detail}` : ""}`;
-    throw res.status === 409 ? new ConflictError(msg) : new Error(msg);
+    throw new Error(msg)
   }
 
   if (!res.body) throw new Error("Odpowiedź bez strumienia.");

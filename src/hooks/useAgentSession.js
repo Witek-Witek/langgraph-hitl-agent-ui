@@ -23,9 +23,9 @@ export const can = (status, action) => ALLOWED[status]?.has(action) ?? false;
   for (const m of raw) {
     if (m.role === "tool") {
       pendingTools.push({
-        id: newId(),
+        id: m.id ?? newId(),
         name: m.name ?? "narzędzie",
-        args: {},
+        args: m.args ?? {},
         status: m.status === "error" ? "error" : "ok",
         result: m.content,
       });
@@ -216,7 +216,7 @@ export function useAgentSession(threadId, ctx = { profile: "", persona: "" }) {
         refreshSnapshots();
         setMessages((prev) =>
           prev.filter(
-            (m) => !(m.id === aiMsg.id && m.content === "" && !m.toolHistory?.length)
+            (m) => !(m.id === aiMsg.id && !m.content.trim() && !m.toolHistory?.length)
           )   // pusty placeholder, ale tylko gdy nie niesie śladu narzędzi
         );
       }
@@ -227,7 +227,7 @@ export function useAgentSession(threadId, ctx = { profile: "", persona: "" }) {
 
   const send = useCallback(
     (text) => {
-      if (!can(status, "send") || !text.trim()) return;  // było: if (status !== "idle" || !text.trim()) return;
+      if (!threadId ||!can(status, "send") || !text.trim()) return;  // było: if (status !== "idle" || !text.trim()) return;
       setTools([]);
       toolsRef.current = [];
       return runStream({
@@ -262,6 +262,7 @@ export function useAgentSession(threadId, ctx = { profile: "", persona: "" }) {
 
 
   const openThread = useCallback(async () => {
+    if (!threadId) return;
     abortRef.current?.abort();
     try {
       const s = await getThreadState(threadId);      // 1. CZY coś czeka
